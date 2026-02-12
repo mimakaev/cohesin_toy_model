@@ -14,6 +14,9 @@ Bonds are different - parametrized by Δℓ_kT - which is bond extension at whic
 Dihedrals are usually used to keep a square planar. A typical configuration would be:
 for a square made of particles clockwise: [i,j,k,l]: a dihedral (i,j,l,k,) for bending across the jl diagonal,
 and (j,i,k,l) for bending across the ik diagonal. Both with angle of 0, and k_dihedral of 50-ish.
+
+It takes a few hours, a 6-pack of beer, and a lot of bashing your head against the wall to understand
+what the "dihedral angle" actually is, and to use it freely. ChatGPT gets it wrong 50% of the time too. Be careful.
 """
 
 import numpy as np
@@ -73,22 +76,22 @@ class MoleculeStructureCollection:
 
     def __getitem__(self, name: str) -> MoleculeStructure:
         return self.structures[name]
-    
+
     def __setitem__(self, name: str, structure: MoleculeStructure) -> None:
         self.structures[name] = structure
-    
+
     def __iter__(self):
         return iter(self.structures)
-    
+
     def __len__(self) -> int:
         return len(self.structures)
-    
+
     def keys(self):
         return self.structures.keys()
-    
+
     def values(self):
         return self.structures.values()
-    
+
     def items(self):
         return self.structures.items()
 
@@ -161,7 +164,7 @@ def verify_bond_angle_dihedral_uniqeness(mol: MoleculeStructure | MoleculeStruct
         dihedral_check_dict[key] = (ind, dihedral)
 
 
-def concatenate_molecule_structures(    
+def concatenate_molecule_structures(
     structureDict: OrderedDict[str, MoleculeStructure] | MoleculeStructureCollection,
     extra_bonds: List[Bond] | None = None,
     extra_angles: List[Angle] | None = None,
@@ -182,7 +185,7 @@ def concatenate_molecule_structures(
     -------
     MoleculeStructure
         A single MoleculeStructure containing concatenated positions, bonds, angles, and index_dict.
-    """    
+    """
     if isinstance(structureDict, MoleculeStructureCollection):
         structureDict = structureDict.structures
 
@@ -197,7 +200,6 @@ def concatenate_molecule_structures(
     if np.any(count_array < 1):
         raise ValueError("Indices in structures are not consecutive. Please ensure indices are consecutive.")
 
-
     total_positions = np.concatenate([s.positions for s in structureDict.values()], axis=0)
     total_bonds = [bond for s in structureDict.values() for bond in s.bonds]
     total_angles = [angle for s in structureDict.values() for angle in s.angles]
@@ -205,7 +207,7 @@ def concatenate_molecule_structures(
 
     # Update index_dict to account for global indices
     index_dict = {}
-    for name,s in structureDict.items():
+    for name, s in structureDict.items():
         for (layer, vid), idx in s.index_dict.items():
             index_dict[(name, layer, vid)] = idx
 
@@ -298,9 +300,9 @@ def add_polymer_forces(
     return None
 
 
-# ===========================================================
-# Helper functions for computing angles and dihedrals
-# ===========================================================
+# ==================================================================
+# Helper functions for computing angles and dihedrals, and distances
+# ==================================================================
 
 
 def dihedral_angle(positions: np.ndarray, i: int, j: int, k: int, l: int) -> float:
@@ -343,6 +345,69 @@ def dihedral_angle(positions: np.ndarray, i: int, j: int, k: int, l: int) -> flo
     return np.arctan2(y, x)
 
 
+def find_minimum_triplet_distance(
+    pos: np.ndarray,
+    type1_indices: list[int],
+    type2_indices: list[int],
+    type3_indices: list[int],
+    cutoff: float = 2.0,
+) -> Tuple[float, np.ndarray, int]:
+    """
+    Find the minimum pairwise distance across all possible triplets and return the indices of the triplet with the minimum distance.
+    Also returns the number of triplets with distance < cutoff
+
+    Parameters:
+    -----------
+    pos : array-like, shape (N, 3)
+        Positions of all particles
+    type1_indices : array-like
+        Indices of type 1 particles
+    type2_indices : array-like
+        Indices of type 2 particles
+    type3_indices : array-like
+        Indices of type 3 particles
+
+    Returns:
+    --------
+    min_distance : float
+        The minimum distance found
+    best_triplet : np.ndarray
+        Indices (i1, i2, i3) of the triplet with minimum distance
+    """
+
+    # Get positions for each type
+    pos1 = pos[type1_indices]  # shape: (n_type1, 3)
+    pos2 = pos[type2_indices]  # shape: (n_type2, 3)
+    pos3 = pos[type3_indices]  # shape: (n_type3, 3)
+
+    min_distance = np.inf
+    best_triplet = np.array((1, 1, 1))  # Initialize with dummy values
+
+    num_triplets = 0  # Counter for triplets with distance < cutoff
+    # Loop over type1 and type2 (small arrays)
+    for i1, idx1 in enumerate(type1_indices):
+        for i2, idx2 in enumerate(type2_indices):
+            # Vectorized distance calculation for all type3
+            d12 = np.linalg.norm(pos1[i1] - pos2[i2])
+            d13 = np.linalg.norm(pos1[i1] - pos3, axis=1)  # vectorized over type3
+            d23 = np.linalg.norm(pos2[i2] - pos3, axis=1)  # vectorized over type3
+
+            # Minimum distance for each type3 particle with this (type1, type2) pair
+            triplet_min_distances = np.maximum(d12, np.maximum(d13, d23))
+
+            # Find the best type3 for this (type1, type2) pair
+            best_i3 = np.argmin(triplet_min_distances)
+            current_min = triplet_min_distances[best_i3]
+            if current_min < cutoff:
+                num_triplets += (triplet_min_distances < cutoff).sum()
+
+            if current_min < min_distance:
+                min_distance = current_min
+                best_triplet = np.array((idx1, idx2, type3_indices[best_i3]))
+
+    return float(min_distance), best_triplet, num_triplets
+
+
 # =============================================================================
 # Functions to build various components of a molecular structure
 # =============================================================================
@@ -377,7 +442,7 @@ def build_ribbon(
     * Disable right angles involving vind=1 at break_ind-3 and break_ind-2.
     """
     if break_idx is None:
-        break_idx = -1000  # no break point, so we can use a large negative value
+        break_idx = -1000  # no break point
     ts_idx = break_idx - 3  # index of the first particle in the torque sensing unit
     # total particles = 2 per row
     total = n_rows * 2
@@ -388,25 +453,27 @@ def build_ribbon(
     index_dict: Dict[Tuple[int, int], int] = {}
 
     # Define twist per row (radians)
-    twist_per_row = -0.43 * dihedral_offset  # adjust this constant as needed
-    
+    # empirically found to be "OK" at initialization and
+    # it is basically forgotten after a few blocks, as forces define the structure.
+    twist_per_row = -0.43 * dihedral_offset
+
     # Assign positions and index_dict
     for row in range(n_rows):
         z = start[2] + row * 1.0
         # Calculate twist angle for this row (no twist for the last row)
         twist_angle = (n_rows - 1 - row) * twist_per_row
-        
+
         for col in (0, 1):
             idx = start_particle_index + row * 2 + col
             # Base position before twist
             x_base = start[0] + col * 1.0
             y_base = start[1]
-            
+
             # Apply twist rotation in XY plane
             x_center = start[0] + 0.5  # Center of the ribbon in X
             y_center = start[1]
-            x = x_center + (x_base - x_center) * np.cos(twist_angle) # - (y_base - y_center) * np.sin(twist_angle)
-            y = y_center + (x_base - x_center) * np.sin(twist_angle) # + (y_base - y_center) * np.cos(twist_angle)
+            x = x_center + (x_base - x_center) * np.cos(twist_angle)  # - (y_base - y_center) * np.sin(twist_angle)
+            y = y_center + (x_base - x_center) * np.sin(twist_angle)  # + (y_base - y_center) * np.cos(twist_angle)
 
             positions[idx - start_particle_index] = (x, y, z)
             index_dict[(row, col)] = idx
@@ -727,9 +794,7 @@ def build_hairy_ring(
         j = (i + 1) % n_monomers
         struct.bonds.append((start_mon_idx + i, start_mon_idx + j, 1, offset_scale))
         prev = (i - 1) % n_monomers
-        struct.angles.append(
-            (start_mon_idx + prev, start_mon_idx + i, start_mon_idx + j, math.pi, backbone_k)
-        )
+        struct.angles.append((start_mon_idx + prev, start_mon_idx + i, start_mon_idx + j, math.pi, backbone_k))
 
     # build hairs
     next_idx = start_mon_idx + n_monomers
@@ -747,6 +812,141 @@ def build_hairy_ring(
         next_idx += 1
 
     return struct
+
+
+def build_straight_line_through_opening(
+    n_monomers: int,
+    spacing: float = 0.95,
+    start_mon_idx: int = 0,
+    backbone_k: float = 5.0,
+    offset_scale: float = 0.05,
+    seed: int | None = None,
+    p_hairy: float = 0.1,
+    hair_len: int = 2,
+) -> MoleculeStructure:
+    """
+    Build a straight polymer line that passes through the opening between two ribbons.
+
+    The line runs along the X axis, passing through (1.5, 0, 1.5).
+    Optionally adds "hairs" (short side chains) at density p_hairy, each hair being
+    `hair_len` connected monomers with bonds only (no angles/dihedrals on hairs).
+    """
+    rng = np.random.default_rng(seed)
+
+    # decide which backbone monomers get hairs (same convention as build_hairy_ring)
+    n_hairy = int(p_hairy * n_monomers)
+    hair_rows = set(rng.choice(n_monomers, n_hairy, replace=False)) if n_hairy > 0 else set()
+
+    # total particles = backbone + sum hair lengths
+    total = n_monomers + len(hair_rows) * hair_len
+    positions = np.zeros((total, 3), dtype=float)
+    index_dict: Dict[Tuple[int, int], int] = {}
+    bonds: List[Bond] = []
+    angles: List[Angle] = []
+
+    center = np.array([1.5, 0.0, 1.5])
+    total_length = (n_monomers - 1) * spacing
+    x_start = center[0] - total_length / 2
+
+    # backbone positions + index_dict
+    for i in range(n_monomers):
+        x = x_start + i * spacing
+        pos = np.array([x, center[1], center[2]], dtype=float)
+        pos += rng.normal(scale=offset_scale, size=3)
+        positions[i] = pos
+        index_dict[(i, 0)] = start_mon_idx + i
+
+    # backbone bonds
+    for i in range(n_monomers - 1):
+        bonds.append((start_mon_idx + i, start_mon_idx + i + 1, spacing, offset_scale))
+
+    # backbone angle constraints to keep the line straight
+    for i in range(1, n_monomers - 1):
+        angles.append((start_mon_idx + i - 1, start_mon_idx + i, start_mon_idx + i + 1, math.pi, backbone_k))
+
+    # hairs: appended after backbone in positions array
+    next_idx = start_mon_idx + n_monomers
+    next_pos = n_monomers  # positions[] cursor for hair particles
+
+    # choose a roughly perpendicular direction (biased toward +Y/+Z so it doesn't sit on the line)
+    base_dir = np.array([0.0, 1.0, 1.0], dtype=float)
+    base_dir /= np.linalg.norm(base_dir)
+
+    for i in range(n_monomers):
+        if i not in hair_rows or hair_len <= 0:
+            continue
+
+        prev_global = start_mon_idx + i
+        prev_pos = positions[i]
+
+        for h in range(hair_len):
+            # small random tilt so hairs don't all overlap
+            v = base_dir + 0.25 * rng.normal(size=3)
+            v /= np.linalg.norm(v)
+
+            hair_pos = prev_pos + spacing * v + rng.normal(scale=offset_scale, size=3)
+            positions[next_pos] = hair_pos
+
+            gidx = next_idx
+            index_dict[(i, 1 + h)] = gidx
+
+            bonds.append((prev_global, gidx, spacing, offset_scale))
+
+            prev_global = gidx
+            prev_pos = hair_pos
+            next_idx += 1
+            next_pos += 1
+
+    return MoleculeStructure(
+        n_rows=n_monomers,
+        start_particle_index=start_mon_idx,
+        positions=positions,
+        bonds=bonds,
+        angles=angles,
+        dihedrals=[],
+        index_dict=index_dict,
+    )
+
+
+def selective_attraction(
+    sim_object: polychrom.simulation.Simulation,
+    type_a_indices: Sequence[int],
+    type_b_indices: Sequence[int],
+    attraction_energy: float = 1.0,
+    attraction_radius: float = 3.0,
+    name: str = "selective_attraction",
+) -> mm.CustomNonbondedForce:
+    """
+    Weak attractive interaction between two particle sets (A-B only, not A-A or B-B).
+
+    Uses a smooth quartic well: E = -ε * (1 - (r/σ)²)² for r < σ
+    Well depth ε at r=0, smoothly goes to 0 at r=σ with zero derivative at both ends.
+
+    Parameters
+    ----------
+    type_a_indices : particles in set A (e.g., ribbon opening)
+    type_b_indices : particles in set B (e.g., line)
+    attraction_energy : well depth in kT
+    attraction_radius : cutoff distance in sim units
+    """
+    energy = "-ATTRe * (1 - (r/ATTRsigma)^2)^2 * step(ATTRsigma - r)"
+
+    force = mm.CustomNonbondedForce(energy)
+    force.name = name  # type: ignore
+    force.addGlobalParameter("ATTRe", attraction_energy * sim_object.kT)
+    force.addGlobalParameter("ATTRsigma", attraction_radius * sim_object.conlen)
+
+    force.setCutoffDistance(attraction_radius * sim_object.conlen)
+    force.setNonbondedMethod(mm.CustomNonbondedForce.CutoffNonPeriodic)
+
+    # All particles must be added, but no per-particle params needed
+    for _ in range(sim_object.N):
+        force.addParticle([])
+
+    # Restrict to only A-B interactions
+    force.addInteractionGroup(set(type_a_indices), set(type_b_indices))
+
+    return force
 
 
 def build_line_attached_to_monomer(
@@ -796,6 +996,43 @@ def build_line_attached_to_monomer(
 # =============================================================================
 
 
+def attractiveBondForce(
+    sim_object: polychrom.simulation.Simulation,
+    bonds: list[tuple[int, int]],
+    strength_kt: float = 2,
+    cutoff: float = 2.0,
+    name: str = "attr_bonds",
+) -> mm.CustomBondForce:
+    """
+    Attractive bond force that mimics the nonbonded potential.
+    (it is based on the polynomial repulsive force, just negative of it)
+    A workaround to enable a simple short-range attraction between just these two monomers.
+    """
+
+    energy = (
+        "- step(ATTRsigma - r) * eattr;"
+        "eattr = rsc12 * (rsc2 - 1.0) * ATTRe / emin12 + ATTRe;"
+        "rsc12 = rsc4 * rsc4 * rsc4;"
+        "rsc4 = rsc2 * rsc2;"
+        "rsc2 = rsc * rsc;"
+        "rsc = r / ATTRsigma * rmin12;"
+    )
+
+    force = mm.CustomBondForce(energy)
+    force.name = name  # type: ignore
+
+    force.addGlobalParameter("ATTRsigma", sim_object.conlen * cutoff)
+    force.addGlobalParameter("ATTRe", sim_object.kT * strength_kt)
+    force.addGlobalParameter("emin12", 46656.0 / 823543.0)
+    force.addGlobalParameter("rmin12", np.sqrt(6.0 / 7.0))
+
+    for i, j in bonds:
+        force.addBond(int(i), int(j), [])
+
+    return force
+
+
+# A key force to keep NipBL, hinge stick, and DNA together
 def threeWayAttraction(
     sim_object: polychrom.simulation.Simulation,
     type1_particle_idx: Sequence[int],
@@ -887,8 +1124,10 @@ def threeWayAttraction(
     return force
 
 
-def add_fucking_complicated_force(sim_object: polychrom.simulation.Simulation, k_linear: float) -> mm.CustomCompoundBondForce:    
-    """    
+def add_fucking_complicated_force(
+    sim_object: polychrom.simulation.Simulation, k_linear: float
+) -> mm.CustomCompoundBondForce:
+    """
     Add a force that drives two dihedrals toward the same target angle, defined by a torque-sensor dihedral.
 
     The use case for this force is to control bending of SCC1/SCC3 polymers using torque applied to them.
@@ -906,12 +1145,12 @@ def add_fucking_complicated_force(sim_object: polychrom.simulation.Simulation, k
     # ( break_idx - 1, 0): 5
     # ( break_idx - 1, 1): 6
 
-
     # alpha 5/3pi is the "straight line" dihedral for cos(dihedral(p6, p8, p7, p10) - alpha))
     # alpha = 2/3 pi is the "Fully scrunched" angle
 
-
     # The torque-sensing part will be simple dihedral between two edges extending from the backbone.
+    # Remember that OpenMM expressions are read backwards -  like highway signs, not like text in Star Wars.
+    # The final expression is first, and variables it is made of are below.
 
     expr = """
     // 11) Total energy = hinge-driving + penalty
@@ -932,7 +1171,8 @@ def add_fucking_complicated_force(sim_object: polychrom.simulation.Simulation, k
     phi_h1    = dihedral(p6,p8,p7,p10) * break_sign;
     phi_h2    = dihedral(p5,p8,p7,p9) * break_sign;
 
-    // 6) Target hinge angle in [2*pi/3,5*pi/3]
+    // 6) Target hinge angle in [2*pi/3,5*pi/3] 
+    // (probably a constant was added to give it a little more "flexibility")
     theta_tgt = 7*pi/6 + (pi/2 + .15)*phi_clamp_sign;
 
     // 5) Multiply clamped value by coupling_sign to set direction
@@ -958,8 +1198,6 @@ def add_fucking_complicated_force(sim_object: polychrom.simulation.Simulation, k
     fuckingComplicatedForce.name = "fuckingComplicatedForce"  # type: ignore - this is polychrom's old convention
     fuckingComplicatedForce.addGlobalParameter("k", 200 * sim_object.kT)
     fuckingComplicatedForce.addGlobalParameter("k_linear", k_linear * sim_object.kT)
-
-    # add the 10 particles in the same order you already have them:
     fuckingComplicatedForce.addPerBondParameter("coupling_sign")
     fuckingComplicatedForce.addPerBondParameter("break_sign")
     return fuckingComplicatedForce
