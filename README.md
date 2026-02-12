@@ -11,6 +11,10 @@ After the power stroke, the spring detaches from the hinge/DNA.
 Thus during the reverse of the power stroke, the hinge holds no affinity to DNA,
 thus creating asymmetry in the translocation. 
 
+## Model schematics 
+
+![model schematics](https://github.com/mimakaev/cohesin_toy_model/blob/main/schematics.png)
+
 ## Licence 
 
 The use of this software is premitted following strict attribution requiremewnts. 
