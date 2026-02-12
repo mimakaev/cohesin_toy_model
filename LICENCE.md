@@ -1,4 +1,4 @@
-Attribution-Required License (ARL) v1.0
+# Attribution-Required License (ARL) v1.0
 
 Copyright (c) 2026, Massachusetts Institute of Technology
 
