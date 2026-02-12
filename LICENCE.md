@@ -44,15 +44,6 @@ attribution must:
 Attribution placed solely in supplementary materials, acknowledgments sections,
 footnotes, or reference lists does **not** by itself satisfy this requirement.
 
-## Cure Provision
-
-If you become aware that you are not in compliance with the Attribution
-Requirements, or if the copyright holder notifies you of non-compliance, you
-have **30 calendar days** from the date of such awareness or notification to
-correct the non-compliance. If compliance is restored within this period, your
-rights under this license are not terminated. If compliance is not restored
-within this period, your rights under this license terminate automatically.
-
 ## Re-Licensing
 
 The copyright holder is open to granting alternative, more permissive licenses
