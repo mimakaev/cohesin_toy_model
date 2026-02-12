@@ -48,7 +48,7 @@ footnotes, or reference lists does **not** by itself satisfy this requirement.
 
 The copyright holder is open to granting alternative, more permissive licenses
 for derivative works or inclusion in software packages on a case-by-case basis.
-Contact [CONTACT INFO] to discuss.
+Contact leonid@mit.edu or mimakaev@mit.edu to discuss.
 
 ## Disclaimer
 
